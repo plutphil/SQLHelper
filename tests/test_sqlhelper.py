@@ -273,7 +273,7 @@ class TestSQLHelperLists(unittest.TestCase):
     def setUp(self):
         import aiosqlite
         from sqlhelper import SQLHelperAsync  # replace with your actual import
-        self.loop = asyncio.get_event_loop()
+        self.loop = asyncio.new_event_loop()
         self.db = SQLHelperAsync(":memory:")
         self.loop.run_until_complete(self.db.loaddb())  # assuming you have a connect method
 

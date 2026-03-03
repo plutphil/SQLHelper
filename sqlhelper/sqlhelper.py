@@ -190,31 +190,49 @@ class SQLHelperAsync:
 class SQLHelper:
     def __init__(self, path="sqlhelper.db", prefix=""):
         self._async = SQLHelperAsync(path, prefix=prefix)
-        asyncio.run(self._async.loaddb())
+        self._run_sync(self._async.loaddb())
+
+    def _run_sync(self, coro):
+        """
+        Run an async coroutine safely from synchronous code.
+        Works even if no event loop exists in this thread.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            # If we're inside a running loop, create a new task and wait for it
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            return future.result()
+        except RuntimeError:
+            # No running loop, create one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(coro)
+            loop.close()
+            return result
 
     def addobject(self, *args, **kwargs):
-        return asyncio.run(self._async.addobject(*args, **kwargs))
+        return self._run_sync(self._async.addobject(*args, **kwargs))
 
     def addobjifnotexist(self, *args, **kwargs):
-        return asyncio.run(self._async.addobjifnotexist(*args, **kwargs))
+        return self._run_sync(self._async.addobjifnotexist(*args, **kwargs))
 
     def sqlfind(self, *args, **kwargs):
-        return asyncio.run(self._async.sqlfind(*args, **kwargs))
+        return self._run_sync(self._async.sqlfind(*args, **kwargs))
 
     def sqlfindmult(self, *args, **kwargs):
-        return asyncio.run(self._async.sqlfindmult(*args, **kwargs))
+        return self._run_sync(self._async.sqlfindmult(*args, **kwargs))
 
     def sqlgetall(self, *args, **kwargs):
-        return asyncio.run(self._async.sqlgetall(*args, **kwargs))
+        return self._run_sync(self._async.sqlgetall(*args, **kwargs))
 
     def getorcreateindex(self, *args, **kwargs):
-        return asyncio.run(self._async.getorcreateindex(*args, **kwargs))
-    
+        return self._run_sync(self._async.getorcreateindex(*args, **kwargs))
+
     def runsql(self, *args, **kwargs):
-        return asyncio.run(self._async.runsql(*args, **kwargs))
+        return self._run_sync(self._async.runsql(*args, **kwargs))
 
     def close(self):
-        return asyncio.run(self._async.close())
+        return self._run_sync(self._async.close())
 
 
 # ----------- Test function -----------
