@@ -3,8 +3,6 @@
 Put any dict or json inside an sqlite database. It automatically creates and alters tables. Auto guesses types.
 Async and synchronous SQLite helper library.
 
-## Todo 
-- List Support
 
 ## Installation
 

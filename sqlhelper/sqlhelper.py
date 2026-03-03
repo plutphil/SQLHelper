@@ -20,6 +20,7 @@ class SQLHelperAsync:
     async def addobject(self, obj: str, data: dict, addindex=True, adddate=True):
         cursor = await self.sqlconnection.cursor()
         # Create table if it doesn't exist
+        lists = {}
         types = []
         for k, v in data.items():
             if isinstance(v, dict):
@@ -34,8 +35,10 @@ class SQLHelperAsync:
             elif isinstance(v, bytes):
                 t = "BLOB"
             elif isinstance(v, list):
-                v = str(v)
-                t = "TEXT"
+                lists[k] = v
+                continue
+                #v = str(v)
+                #t = "TEXT"
             else:
                 t = "TEXT"
             types.append((k, t, v))
@@ -71,7 +74,14 @@ class SQLHelperAsync:
         sql = f"INSERT INTO {self.PREFIX}{obj} ({', '.join(inserttypes)}) VALUES ({', '.join(insertqmarks)});"
         await cursor.execute(sql, tuple(values))
         await self.sqlconnection.commit()
-        return cursor.lastrowid
+        
+        newrowid = cursor.lastrowid
+        for k,v in lists.items():
+            for e in v:
+                e[obj+"_id"] = newrowid
+                await self.addobjifnotexist(obj+"_"+k,e,False,False)
+        
+        return newrowid
 
     async def addobjifnotexist(self, objname: str, data: dict, addindex=True, adddate=True):
         obj = await self.sqlfindmult(objname, data)
@@ -187,7 +197,6 @@ def test_sqlhelper():
     print(db.runsql("SELECT * FROM t_users"))
     
     db.close()
-
 
 if __name__ == "__main__":
     test_sqlhelper()

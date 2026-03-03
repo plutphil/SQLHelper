@@ -1,4 +1,3 @@
-
 import unittest
 import os
 from sqlhelper import SQLHelper
@@ -262,6 +261,224 @@ class TestSQLHelper(unittest.TestCase):
             if os.path.exists(path):
                 os.remove(path)
 
+import unittest
+import asyncio
+
+class TestSQLHelperLists(unittest.TestCase):
+
+    def setUp(self):
+        import aiosqlite
+        from sqlhelper import SQLHelperAsync  # replace with your actual import
+        self.loop = asyncio.get_event_loop()
+        self.db = SQLHelperAsync(":memory:")
+        self.loop.run_until_complete(self.db.loaddb())  # assuming you have a connect method
+
+    def tearDown(self):
+        self.loop.run_until_complete(self.db.sqlconnection.close())
+
+
+    # Test addobject with list handling
+    def test_addobject_with_list(self):
+        async def test():
+            data = {
+                "title": "Parent Object",
+                "items": [
+                    {"subname": "A"},
+                    {"subname": "B"}
+                ]
+            }
+            row_id = await self.db.addobject("parent_table", data)
+            self.assertIsInstance(row_id, int)
+
+            # check that addobjifnotexist was called for each list item
+            # here we mock addobjifnotexist to record calls
+            called_items = []
+
+            async def mock_addobjifnotexist(name, data, addindex=True, adddate=True):
+                called_items.append((name, data))
+                return 100  # fake ID
+
+            self.db.addobjifnotexist = mock_addobjifnotexist
+            await self.db.addobject("parent_table", data)
+
+            self.assertEqual(len(called_items), 2)
+            self.assertEqual(called_items[0][1]["subname"], "A")
+            self.assertEqual(called_items[1][1]["subname"], "B")
+
+        self.loop.run_until_complete(test())
+    
+    async def _fetch_all_rows(self, table):
+        """Return every row from *table* as a list of sqlite3.Row-like tuples."""
+        cursor = await self.db.sqlconnection.cursor()
+        await cursor.execute(f"SELECT * FROM {table}")
+        return await cursor.fetchall()
+
+    async def _column_names(self, table):
+        """Return the column names for *table*."""
+        cursor = await self.db.sqlconnection.cursor()
+        await cursor.execute(f"PRAGMA table_info({table})")
+        return [row[1] for row in await cursor.fetchall()]
+
+    # ── tests ─────────────────────────────────────────────────────────────────
+
+    def test_addobject_with_list_returns_valid_id(self):
+        """addobject returns an integer row-id even when the data contains lists."""
+        async def run():
+            data = {
+                "title": "Parent Object",
+                "items": [{"subname": "A"}, {"subname": "B"}],
+            }
+            row_id = await self.db.addobject("parent", data)
+            self.assertIsInstance(row_id, int)
+            self.assertGreater(row_id, 0)
+
+        self.loop.run_until_complete(run())
+
+    def test_list_items_stored_in_child_table(self):
+        """Each element of a list field must appear as a row in the child table
+        (named  <parent>_<field>) with the correct scalar values."""
+        async def run():
+            data = {
+                "title": "Parent Object",
+                "items": [{"subname": "A"}, {"subname": "B"}],
+            }
+            await self.db.addobject("parent", data)
+
+            rows = await self._fetch_all_rows("parent_items")
+            self.assertEqual(len(rows), 2, "Expected exactly 2 child rows")
+
+            cols = await self._column_names("parent_items")
+            subname_idx = cols.index("subname")
+            subnames = {row[subname_idx] for row in rows}
+            self.assertEqual(subnames, {"A", "B"})
+
+        self.loop.run_until_complete(run())
+
+    def test_list_items_carry_parent_foreign_key(self):
+        """Child rows must have a  <parent>_id  column pointing back to the
+        parent row that was just inserted."""
+        async def run():
+            data = {
+                "title": "Parent Object",
+                "items": [{"subname": "A"}, {"subname": "B"}],
+            }
+            parent_id = await self.db.addobject("parent", data)
+
+            rows = await self._fetch_all_rows("parent_items")
+            cols = await self._column_names("parent_items")
+
+            self.assertIn(
+                "parent_id", cols,
+                "Child table must contain a 'parent_id' foreign-key column",
+            )
+            fk_idx = cols.index("parent_id")
+            for row in rows:
+                self.assertEqual(
+                    row[fk_idx],
+                    parent_id,
+                    f"Child row {row} does not reference parent id {parent_id}",
+                )
+
+        self.loop.run_until_complete(run())
+
+    def test_list_items_retrievable_by_foreign_key(self):
+        """sqlgetall + manual filter must return only the children that belong
+        to a specific parent when multiple parents exist."""
+        async def run():
+            id_one = await self.db.addobject(
+                "parent", {"title": "First", "items": [{"subname": "X"}, {"subname": "Y"}]}
+            )
+            id_two = await self.db.addobject(
+                "parent", {"title": "Second", "items": [{"subname": "Z"}]}
+            )
+
+            all_children = await self.db.sqlgetall("parent_items")
+            cols = await self._column_names("parent_items")
+            fk_idx = cols.index("parent_id")
+            subname_idx = cols.index("subname")
+
+            children_of_one = [r for r in all_children if r[fk_idx] == id_one]
+            children_of_two = [r for r in all_children if r[fk_idx] == id_two]
+
+            self.assertEqual(len(children_of_one), 2)
+            self.assertEqual(len(children_of_two), 1)
+            self.assertEqual(
+                {r[subname_idx] for r in children_of_one}, {"X", "Y"}
+            )
+            self.assertEqual(
+                {r[subname_idx] for r in children_of_two}, {"Z"}
+            )
+
+        self.loop.run_until_complete(run())
+
+    def test_duplicate_list_items_are_deduplicated(self):
+        """addobjifnotexist must not insert a child row that already exists
+        with the same data (including the same parent_id)."""
+        async def run():
+            data = {
+                "title": "Parent",
+                "items": [{"subname": "Dup"}, {"subname": "Dup"}],
+            }
+            await self.db.addobject("parent", data)
+
+            rows = await self._fetch_all_rows("parent_items")
+            # Both entries share identical data → only 1 row should survive.
+            self.assertEqual(
+                len(rows), 1,
+                "Duplicate list entries with identical data should be deduplicated",
+            )
+
+        self.loop.run_until_complete(run())
+
+    def test_list_field_does_not_create_column_in_parent_table(self):
+        """The list key must NOT appear as a column in the parent table —
+        it is stored in a child table instead."""
+        async def run():
+            data = {
+                "title": "Parent",
+                "items": [{"subname": "A"}],
+            }
+            await self.db.addobject("parent", data)
+            cols = await self._column_names("parent")
+            self.assertNotIn(
+                "items", cols,
+                "List field 'items' must not become a column in the parent table",
+            )
+
+        self.loop.run_until_complete(run())
+
+    def test_addobject_with_mock_tracks_calls_per_list_item(self):
+        """Classic mock-style check: addobjifnotexist is called once per list
+        element, receiving the correct payload each time."""
+        async def run():
+            called_items = []
+
+            async def mock_addobjifnotexist(name, data, addindex=True, adddate=True):
+                called_items.append((name, dict(data)))
+                return 100  # fake child ID
+
+            self.db.addobjifnotexist = mock_addobjifnotexist
+
+            data = {
+                "title": "Parent Object",
+                "items": [{"subname": "A"}, {"subname": "B"}],
+            }
+            await self.db.addobject("parent", data)
+
+            # Two list items → two mock calls
+            self.assertEqual(len(called_items), 2)
+
+            child_table_names = {name for name, _ in called_items}
+            self.assertEqual(child_table_names, {"parent_items"})
+
+            subnames = {d["subname"] for _, d in called_items}
+            self.assertEqual(subnames, {"A", "B"})
+
+            # Every call must have received the parent's row-id as foreign key
+            for _, d in called_items:
+                self.assertIn("parent_id", d)
+
+        self.loop.run_until_complete(run())
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
