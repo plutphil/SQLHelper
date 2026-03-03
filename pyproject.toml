@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sqlhelper"
+version = "0.1.0"
+description = "Async and sync SQLite helper library"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+  { name = "plutphil", email = "plutphil@gmail.com" }
+]
+license = { text = "MIT" }
+dependencies = [
+  "aiosqlite>=0.19.0"
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent"
+]
