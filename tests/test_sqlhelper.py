@@ -52,7 +52,11 @@ class TestSQLHelper(unittest.TestCase):
 
     def test_addobject_with_list(self):
         self.db.addobject("lists", {"items": [1, 2, 3]})
-        row = self.db.sqlfind("lists", "items", "[1, 2, 3]")
+        row = self.db.sqlfind("lists_items", "items", 1)
+        self.assertIsNotNone(row)
+        row = self.db.sqlfind("lists_items", "items", 2)
+        self.assertIsNotNone(row)
+        row = self.db.sqlfind("lists_items", "items", 3)
         self.assertIsNotNone(row)
 
     def test_addobject_adds_datecreated_by_default(self):

@@ -2,15 +2,55 @@ import asyncio
 import aiosqlite
 import traceback
 
+import aiosqlite
 
 class SQLHelperAsync:
-    def __init__(self, path="sqlhelper.db", prefix=""):
+    def __init__(self, database="sqlhelper.db", db_type="sqlite", host=None, port=None, user=None, password=None, prefix=""):
         self.sqlconnection = None
+        self.db_type = db_type.lower()
+        self.host = host
+        self.port = port
+        self.user = user
+        self.password = password
+        self.database = database
         self.PREFIX = prefix
-        self.path = path
 
     async def loaddb(self):
-        self.sqlconnection = await aiosqlite.connect(self.path)
+        if self.db_type == "sqlite":
+            self.sqlconnection = await aiosqlite.connect(self.database)
+        elif self.db_type == "postgresql":
+            import asyncpg
+            self.sqlconnection = await asyncpg.connect(
+                host=self.host,
+                port=self.port or 5432,
+                user=self.user,
+                password=self.password,
+                database=self.database
+            )
+        elif self.db_type == "mysql":
+            import aiomysql
+            self.sqlconnection = await aiomysql.connect(
+                host=self.host,
+                port=self.port or 3306,
+                user=self.user,
+                password=self.password,
+                db=self.database
+            )
+        elif self.db_type == "duckdb":
+            # DuckDB is synchronous, so we wrap it in a thread for async usage
+            import duckdb
+            import anyio  # For async thread-safe execution for DuckDB
+            self.sqlconnection = await anyio.to_thread.run_sync(lambda: duckdb.connect(database=self.database))
+        else:
+            raise ValueError(f"Unsupported database type: {self.db_type}")
+
+    async def close(self):
+        if self.sqlconnection:
+            if self.db_type in ["sqlite", "postgresql", "mysql"]:
+                await self.sqlconnection.commit()
+                await self.sqlconnection.close()
+            elif self.db_type == "duckdb":
+                await anyio.to_thread.run_sync(self.sqlconnection.close)
 
     async def _get_existing_columns(self, table):
         cursor = await self.sqlconnection.cursor()
@@ -51,7 +91,12 @@ class SQLHelperAsync:
             if adddate:
                 sql_command += "datecreated TEXT,"
             sql_command += ", ".join([f"{k} {t}" for k, t, _ in types])
+            # when object is empty remove comma
+            if sql_command.endswith(","): 
+                sql_command = sql_command[:-1]
+                
             sql_command += ");"
+            
             await cursor.execute(sql_command)
         else:
             for k, t, _ in types:
@@ -78,8 +123,11 @@ class SQLHelperAsync:
         newrowid = cursor.lastrowid
         for k,v in lists.items():
             for e in v:
-                e[obj+"_id"] = newrowid
-                await self.addobjifnotexist(obj+"_"+k,e,False,False)
+                if isinstance(e,dict):
+                    e[obj+"_id"] = newrowid
+                    await self.addobjifnotexist(obj+"_"+k,e,False,False)
+                else:
+                    await self.addobjifnotexist(obj+"_"+k,{k:e,obj+"_id":newrowid},False,False)
         
         return newrowid
 
@@ -122,9 +170,6 @@ class SQLHelperAsync:
             res = await self.sqlfind(table, col, val)
         return res[0]
 
-    async def close(self):
-        await self.sqlconnection.commit()
-        await self.sqlconnection.close()
         
     async def runsql(self, sql: str, params: tuple = ()):
         """Run raw SQL with optional parameters and return cursor.fetchall() if available."""
@@ -144,7 +189,7 @@ class SQLHelperAsync:
 # ----------- Non-async wrapper -----------
 class SQLHelper:
     def __init__(self, path="sqlhelper.db", prefix=""):
-        self._async = SQLHelperAsync(path, prefix)
+        self._async = SQLHelperAsync(path, prefix=prefix)
         asyncio.run(self._async.loaddb())
 
     def addobject(self, *args, **kwargs):
