@@ -4,11 +4,6 @@ Put any dict or json inside an sqlite database. It automatically creates and alt
 Async and synchronous SQLite helper library.
 
 
-## Installation
-
-```bash
-pip install sqlhelper
-```
 
 ## Usage
 
